@@ -1,0 +1,24 @@
+{
+    "rewrites": [
+        {
+            "source": "/api/fund/:path*",
+            "destination": "https://fundgz.1234567.com.cn/js/:path*"
+        },
+        {
+            "source": "/api/funddata/:path*",
+            "destination": "https://fund.eastmoney.com/:path*"
+        },
+        {
+            "source": "/api/search/:path*",
+            "destination": "https://fundsuggest.eastmoney.com/:path*"
+        },
+        {
+            "source": "/api/stock/:path*",
+            "destination": "https://push2.eastmoney.com/:path*"
+        },
+        {
+            "source": "/api/fundcc/:path*",
+            "destination": "https://fundf10.eastmoney.com/:path*"
+        }
+    ]
+}
