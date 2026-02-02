@@ -20,6 +20,10 @@
         {
             "source": "/api/fundcc/:path*",
             "destination": "https://fundf10.eastmoney.com/:path*"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
         }
     ]
 }
