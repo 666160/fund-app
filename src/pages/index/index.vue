@@ -89,9 +89,12 @@
             </view>
 
             <view class="holding-card__col">
-              <text class="holding-card__rate" :class="parseFloat(item.fund.gszzl) >= 0 ? 'rise' : 'fall'">
-                {{ formatRate(parseFloat(item.fund.gszzl)) }}
-              </text>
+              <view class="rate-wrap">
+                <text class="holding-card__rate" :class="parseFloat(item.fund.gszzl) >= 0 ? 'rise' : 'fall'">
+                  {{ formatRate(parseFloat(item.fund.gszzl)) }}
+                </text>
+                <text v-if="item.fund.isActual" class="actual-tag">实</text>
+              </view>
             </view>
 
             <view class="holding-card__col">
@@ -148,8 +151,9 @@
           </view>
         </view>
         <view class="modal-footer">
-          <view class="modal-btn modal-btn--cancel" @click="closeEditModal">取消</view>
-          <view class="modal-btn modal-btn--confirm" @click="saveHolding">保存</view>
+          <view v-if="isFundAdded(editingFund?.fund.fundcode || '')" class="modal-btn delete" @click="deleteFund">删除
+          </view>
+          <view class="modal-btn confirm" @click="saveHolding">保存</view>
         </view>
       </view>
     </view>
@@ -157,18 +161,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { onShow, onPullDownRefresh } from '@dcloudio/uni-app';
 import { getFundEstimate, type FundEstimate } from '@/api/fund';
 import {
   getMyFunds,
-  removeMyFund,
+  addMyFund,
   updateFundHolding,
+  removeMyFund,
+  getFundHolding,
+  isFundAdded,
   calculateHolding,
   calculateTotalAssets,
   type FundHolding,
   type HoldingCalculation
 } from '@/utils/storage';
+
+// ... (HoldingItem interface and state refs remain same) ...
 
 // 持仓项
 interface HoldingItem {
@@ -236,7 +245,7 @@ const loadFunds = async () => {
 
   try {
     const results = await Promise.allSettled(
-      myFunds.value.map(f => getFundEstimate(f.code))
+      myFunds.value.map(f => getFundEstimate(f.code, true)) // 开启真实净值校准
     );
 
     const map = new Map<string, FundEstimate>();
@@ -294,8 +303,6 @@ const closeEditModal = () => {
 
 // 保存持仓
 const saveHolding = () => {
-  if (!editingFund.value) return;
-
   const shares = parseFloat(editShares.value) || 0;
   const costPrice = parseFloat(editCostPrice.value) || 0;
 
@@ -304,10 +311,38 @@ const saveHolding = () => {
     return;
   }
 
-  updateFundHolding(editingFund.value.holding.code, shares, costPrice);
+  if (editingFund.value && !isFundAdded(editingFund.value.fund.fundcode)) {
+    addMyFund({
+      code: editingFund.value.fund.fundcode,
+      name: editingFund.value.fund.name,
+      shares,
+      costPrice
+    });
+  } else if (editingFund.value) {
+    updateFundHolding(editingFund.value.holding.code, shares, costPrice);
+  }
+
   uni.showToast({ title: '保存成功', icon: 'success' });
   closeEditModal();
   loadFunds();
+};
+
+// 删除持仓
+const deleteFund = () => {
+  if (!editingFund.value) return;
+
+  uni.showModal({
+    title: '提示',
+    content: '确定删除该基金吗？',
+    success: (res) => {
+      if (res.confirm) {
+        removeMyFund(editingFund.value!.fund.fundcode);
+        uni.showToast({ title: '已删除', icon: 'success' });
+        closeEditModal();
+        loadFunds();
+      }
+    }
+  });
 };
 
 // 跳转搜索页
@@ -727,5 +762,22 @@ onShow(() => {
 .modal-btn--confirm {
   color: #1a73e8;
   font-weight: 600;
+}
+
+.rate-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8rpx;
+}
+
+.actual-tag {
+  font-size: 18rpx;
+  color: #f5222d;
+  background: rgba(245, 34, 45, 0.1);
+  padding: 2rpx 6rpx;
+  border-radius: 4rpx;
+  border: 1rpx solid rgba(245, 34, 45, 0.2);
+  line-height: 1;
 }
 </style>
