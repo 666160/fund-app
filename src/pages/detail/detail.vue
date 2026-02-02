@@ -89,10 +89,12 @@
 
       <!-- 关联涨幅 Tab -->
       <view v-if="activeTab === 'trend'" class="tab-content">
-        <view class="chart-header">
-          <text class="chart-date">{{ currentDate }}</text>
-          <text class="chart-estimate" :class="isRise ? 'rise' : 'fall'">
-            估算涨幅 {{ displayPercent }}
+        <view class="fund-estimate" :class="isRise ? 'rise' : 'fall'">
+          <text class="estimate-date">
+            {{ fundData?.jzrq }} {{ fundData?.isActual ? '(已确认)' : '' }}
+          </text>
+          <text class="estimate-val">
+            {{ fundData?.isActual ? '实际涨幅' : '估算涨幅' }} {{ displayPercent }}
           </text>
         </view>
 
@@ -483,15 +485,15 @@ const formatRate = (value: number) => {
   return `${sign}${value.toFixed(2)}%`;
 };
 
-// 加载数据
-const loadData = async (showLoading = true) => {
+// 获取基金详情
+const loadFundDetail = async (showLoading = true) => {
   if (showLoading) loading.value = true;
   else refreshing.value = true;
 
   try {
-    // 并行加载所有数据
+    // 并行请求：获取估值（开启真实净值校准）、走势、持仓、板块
     const [estimate, trend, holdings, sector] = await Promise.all([
-      getFundEstimate(code.value),
+      getFundEstimate(code.value, true), // 开启真实净值校准
       getFundDayTrend(code.value),
       getFundStockHoldings(code.value),
       getFundSector(code.value)
@@ -499,6 +501,7 @@ const loadData = async (showLoading = true) => {
 
     fundData.value = estimate;
     chartPoints.value = trend;
+
     stockHoldings.value = holdings;
     sectorInfo.value = sector;
     isAdded.value = isFundAdded(code.value);
@@ -513,7 +516,7 @@ const loadData = async (showLoading = true) => {
 
 // 刷新
 const onRefresh = () => {
-  loadData(false);
+  loadFundDetail(false);
   uni.showToast({ title: '刷新成功', icon: 'success', duration: 1000 });
 };
 
@@ -526,7 +529,7 @@ const setupAutoRefresh = () => {
     const isTradingTime =
       (hour === 9 && minute >= 30) || (hour === 10) || (hour === 11 && minute <= 30) ||
       (hour >= 13 && hour < 15);
-    if (isTradingTime) loadData(false);
+    if (isTradingTime) loadFundDetail(false);
   }, 60000) as unknown as number;
 };
 
@@ -587,10 +590,11 @@ onLoad((options) => {
   code.value = options?.code || '';
   name.value = decodeURIComponent(options?.name || '');
   if (code.value) {
-    loadData();
+    loadFundDetail();
     setupAutoRefresh();
   }
 });
+
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer);

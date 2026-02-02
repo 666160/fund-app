@@ -9,6 +9,7 @@ export interface FundEstimate {
   gsz: string;        // 估算净值
   gszzl: string;      // 估算涨跌幅
   gztime: string;     // 估值时间
+  isActual?: boolean; // 是否为真实涨跌幅（非估算）
 }
 
 // 重仓股信息
@@ -56,7 +57,32 @@ function isH5(): boolean {
  */
 async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | null> {
   return new Promise((resolve) => {
-    // 只在 H5 环境使用 script 标签方式
+    // 内部逻辑保持不变，只需在返回对象中包含 isActual: true
+    const handleSuccess = (win: any) => {
+      const name = win.fS_name || '';
+      const netWorthTrend = win.Data_netWorthTrend || [];
+
+      if (netWorthTrend.length > 0) {
+        // 获取最新一条数据
+        const latest = netWorthTrend[netWorthTrend.length - 1];
+        const lastDate = new Date(latest.x);
+        const dateStr = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
+
+        resolve({
+          fundcode: fundCode,
+          name: name,
+          jzrq: dateStr,
+          dwjz: String(latest.y || 1),
+          gsz: String(latest.y || 1),
+          gszzl: String(latest.equityReturn || 0),
+          gztime: dateStr + ' 15:00',
+          isActual: true // 标记为真实数据
+        });
+      } else {
+        resolve(null);
+      }
+    };
+
     if (isH5()) {
       const scriptId = `fallback_${fundCode}_${Date.now()}`;
       const script = document.createElement('script');
@@ -66,7 +92,7 @@ async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | nul
       const timeout = setTimeout(() => {
         cleanup();
         resolve(null);
-      }, 8000);
+      }, 5000); // 缩短超时时间以免阻塞
 
       const cleanup = () => {
         clearTimeout(timeout);
@@ -77,31 +103,10 @@ async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | nul
       script.onload = () => {
         cleanup();
         try {
-          const win = window as any;
-          const name = win.fS_name || '';
-          const netWorthTrend = win.Data_netWorthTrend || [];
-
-          if (netWorthTrend.length > 0) {
-            // 获取最新一条数据
-            const latest = netWorthTrend[netWorthTrend.length - 1];
-            const lastDate = new Date(latest.x);
-            const dateStr = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
-
-            resolve({
-              fundcode: fundCode,
-              name: name,
-              jzrq: dateStr,
-              dwjz: String(latest.y || 1),
-              gsz: String(latest.y || 1),
-              gszzl: String(latest.equityReturn || 0),
-              gztime: dateStr + ' 15:00'
-            });
-            return;
-          }
+          handleSuccess(window as any);
         } catch (e) {
-          console.error('解析备用估值数据失败:', e);
+          resolve(null);
         }
-        resolve(null);
       };
 
       script.onerror = () => {
@@ -111,7 +116,7 @@ async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | nul
 
       document.head.appendChild(script);
     } else {
-      // 非 H5 环境使用 uni.request
+      // 非 H5 环境
       uni.request({
         url: `https://fund.eastmoney.com/pingzhongdata/${fundCode}.js?v=${Date.now()}`,
         method: 'GET',
@@ -119,36 +124,21 @@ async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | nul
           if (res.statusCode === 200 && res.data) {
             try {
               const data = res.data as string;
-              // 解析基金名称
+              // 简易解析
               const nameMatch = data.match(/var\s+fS_name\s*=\s*"([^"]+)"/);
-              const name = nameMatch ? nameMatch[1] : '';
-
-              // 解析净值走势数组
               const trendMatch = data.match(/var\s+Data_netWorthTrend\s*=\s*(\[[\s\S]*?\]);/);
-              if (trendMatch) {
-                const trendData = JSON.parse(trendMatch[1]);
-                if (trendData.length > 0) {
-                  const latest = trendData[trendData.length - 1];
-                  const lastDate = new Date(latest.x);
-                  const dateStr = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
 
-                  resolve({
-                    fundcode: fundCode,
-                    name: name,
-                    jzrq: dateStr,
-                    dwjz: String(latest.y || 1),
-                    gsz: String(latest.y || 1),
-                    gszzl: String(latest.equityReturn || 0),
-                    gztime: dateStr + ' 15:00'
-                  });
-                  return;
-                }
+              if (trendMatch) {
+                const mockWin = {
+                  fS_name: nameMatch ? nameMatch[1] : '',
+                  Data_netWorthTrend: JSON.parse(trendMatch[1])
+                };
+                handleSuccess(mockWin);
+              } else {
+                resolve(null);
               }
-            } catch (e) {
-              console.error('解析备用估值数据失败:', e);
-            }
-          }
-          resolve(null);
+            } catch { resolve(null); }
+          } else { resolve(null); }
         },
         fail: () => resolve(null)
       });
@@ -160,73 +150,77 @@ async function getFallbackEstimate(fundCode: string): Promise<FundEstimate | nul
  * 获取基金实时估值
  * 优先使用估值接口，如果返回空数据则使用 pingzhongdata 作为备用
  */
-export function getFundEstimate(fundCode: string): Promise<FundEstimate> {
+export function getFundEstimate(fundCode: string, checkActual: boolean = false): Promise<FundEstimate> {
   return new Promise((resolve, reject) => {
     let baseUrl = 'https://fundgz.1234567.com.cn/js';
     if (isH5()) {
       baseUrl = '/api/fund';
     }
 
-    uni.request({
-      url: `${baseUrl}/${fundCode}.js?rt=${Date.now()}`,
-      method: 'GET',
-      success: async (res) => {
-        if (res.statusCode === 200 && res.data) {
-          const data = res.data as string;
-          const jsonStr = data.replace(/^jsonpgz\(/, '').replace(/\);?$/, '');
+    // 主请求：获取估值
+    const fetchEstimate = new Promise<FundEstimate>((estResolve, estReject) => {
+      uni.request({
+        url: `${baseUrl}/${fundCode}.js?rt=${Date.now()}`,
+        method: 'GET',
+        success: (res) => {
+          if (res.statusCode === 200 && res.data) {
+            const data = res.data as string;
+            const jsonStr = data.replace(/^jsonpgz\(/, '').replace(/\);?$/, '');
 
-          // 检查是否为空数据（如 "jsonpgz();" 或 "{}"）
-          if (!jsonStr || jsonStr === '{}' || jsonStr.trim() === '') {
-            console.log('估值接口返回空数据，尝试使用备用接口...');
-            const fallback = await getFallbackEstimate(fundCode);
-            if (fallback) {
-              resolve(fallback);
-            } else {
-              reject(new Error('无法获取估值数据'));
+            if (!jsonStr || jsonStr === '{}' || jsonStr.trim() === '') {
+              estReject(new Error('Empty data'));
+              return;
             }
-            return;
+            try {
+              const fundData = JSON.parse(jsonStr) as FundEstimate;
+              estResolve(fundData);
+            } catch { estReject(new Error('Parse error')); }
+          } else {
+            estReject(new Error('Request failed'));
           }
+        },
+        fail: (err) => estReject(err)
+      });
+    });
 
+    // 处理最终结果
+    fetchEstimate
+      .then(async (estimate) => {
+        // 如果需要校准，且当前获取到的估值日期可能滞后
+        if (checkActual) {
           try {
-            const fundData = JSON.parse(jsonStr) as FundEstimate;
-            // 检查是否有有效的估值数据
-            if (fundData && fundData.gszzl !== undefined && fundData.gszzl !== '') {
-              resolve(fundData);
-            } else {
-              // 估值数据无效，使用备用接口
-              console.log('估值数据无效，尝试使用备用接口...');
-              const fallback = await getFallbackEstimate(fundCode);
-              if (fallback) {
-                resolve(fallback);
-              } else {
-                // 返回原始数据，即使不完整
-                resolve(fundData);
+            // 获取真实净值数据
+            const actual = await getFallbackEstimate(fundCode);
+            if (actual) {
+              const estJzrq = new Date(estimate.jzrq.replace(/-/g, '/'));
+              const actJzrq = new Date(actual.jzrq.replace(/-/g, '/'));
+
+              // 比较：如果 actual.jzrq > estimate.jzrq，说明 actual 更新了！
+              // 或者：如果日期相同，但估值数据不完整（例如 gszzl 为空），也尝试使用真实数据
+              if (actJzrq.getTime() > estJzrq.getTime() || (actJzrq.getTime() === estJzrq.getTime() && (!estimate.gszzl || estimate.gszzl === ''))) {
+                console.log('真实净值已更新或估值数据不完整，使用真实数据覆盖估值', actual);
+                resolve(actual);
+                return;
               }
             }
           } catch (e) {
-            // 解析失败，尝试备用接口
-            console.log('解析估值数据失败，尝试使用备用接口...');
-            const fallback = await getFallbackEstimate(fundCode);
-            if (fallback) {
-              resolve(fallback);
-            } else {
-              reject(new Error('解析基金数据失败'));
-            }
+            console.warn('校准真实净值失败，使用估值数据');
           }
-        } else {
-          reject(new Error('请求失败'));
         }
-      },
-      fail: async (err) => {
-        // 请求失败，尝试备用接口
+
+        resolve(estimate);
+      })
+      .catch(async () => {
+        // 获取失败（如 LOF 基金），回退到 pingzhongdata
+        console.log('估值接口失败，尝试备用接口...');
         const fallback = await getFallbackEstimate(fundCode);
         if (fallback) {
           resolve(fallback);
         } else {
-          reject(err);
+          // 如果都失败了，还是尽量 resolve 原始错误或空
+          reject(new Error('无法获取基金数据'));
         }
-      }
-    });
+      });
   });
 }
 
