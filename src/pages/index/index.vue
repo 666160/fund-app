@@ -162,7 +162,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { onShow, onPullDownRefresh } from '@dcloudio/uni-app';
+import { onShow, onHide, onPullDownRefresh } from '@dcloudio/uni-app';
 import { getFundEstimate, type FundEstimate } from '@/api/fund';
 import {
   getMyFunds,
@@ -193,6 +193,7 @@ const isHidden = ref(false);
 const myFunds = ref<FundHolding[]>([]);
 const fundList = ref<HoldingItem[]>([]);
 const estimateMap = ref<Map<string, FundEstimate>>(new Map());
+let refreshTimer: number | null = null; // 定时器引用
 
 // 编辑弹窗状态
 const showEditModal = ref(false);
@@ -229,7 +230,7 @@ const toggleHidden = () => {
 };
 
 // 加载数据
-const loadFunds = async () => {
+const loadFunds = async (showLoading = true) => {
   myFunds.value = getMyFunds();
 
   if (myFunds.value.length === 0) {
@@ -241,7 +242,7 @@ const loadFunds = async () => {
     return;
   }
 
-  loading.value = true;
+  if (showLoading) loading.value = true;
 
   try {
     const results = await Promise.allSettled(
@@ -273,7 +274,7 @@ const loadFunds = async () => {
     totalProfitRate.value = totals.totalProfitRate;
 
   } catch (e) {
-    uni.showToast({ title: '加载失败', icon: 'none' });
+    if (showLoading) uni.showToast({ title: '加载失败', icon: 'none' });
   } finally {
     loading.value = false;
   }
@@ -285,6 +286,32 @@ const onRefresh = async () => {
   await loadFunds();
   isRefreshing.value = false;
   uni.showToast({ title: '刷新成功', icon: 'success' });
+};
+
+// 自动刷新逻辑
+const startAutoRefresh = () => {
+  if (refreshTimer) clearInterval(refreshTimer);
+
+  refreshTimer = setInterval(() => {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const isTradingTime =
+      (hour === 9 && minute >= 30) || (hour === 10) || (hour === 11 && minute <= 30) ||
+      (hour >= 13 && hour < 15);
+
+    if (isTradingTime) {
+      console.log('触发首页自动刷新');
+      loadFunds(false); // 静默刷新，不显示 loading
+    }
+  }, 60000) as unknown as number;
+};
+
+const stopAutoRefresh = () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
 };
 
 // 编辑持仓
@@ -360,6 +387,12 @@ const goToDetail = (item: HoldingItem) => {
 // 页面显示时刷新数据
 onShow(() => {
   loadFunds();
+  startAutoRefresh();
+});
+
+// 页面隐藏时停止刷新
+onHide(() => {
+  stopAutoRefresh();
 });
 </script>
 
